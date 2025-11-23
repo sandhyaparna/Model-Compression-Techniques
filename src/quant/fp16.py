@@ -1,9 +1,16 @@
+import glob
+import time
+from pathlib import Path
+
+import torch
+import torch.nn as nn
 import torchvision.transforms as T
 from PIL import Image
-import glob
+
 to_tensor = T.Compose([T.ToTensor()])  # PIL -> FloatTensor CxHxW in [0,1]
 
-def load_calib_images(max_imgs=256):
+
+def load_calib_images(calib_images_dir, max_imgs=256):
     paths = sorted(glob.glob(str(Path(calib_images_dir) / "*")))[:max_imgs]
     imgs = []
     for p in paths:
@@ -13,6 +20,7 @@ def load_calib_images(max_imgs=256):
         except Exception as e:
             print(f"Skipping {p}: {e}")
     return imgs
+
 
 # Keep normalization layers in float32 for numerical stability
 def norms_to_fp32(m: nn.Module):
@@ -32,19 +40,23 @@ def linears_to_half(m: nn.Module):
 
 def run_quant_infer(m, imgs, warmup=3, iters=10):
     m.eval()
-    use_amp = (next(m.parameters()).device.type == "cuda")
+    use_amp = next(m.parameters()).device.type == "cuda"
 
     with torch.inference_mode():
         # warmup
         for _ in range(warmup):
             img = imgs[0].to(next(m.parameters()).device, non_blocking=True)
-            with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp):
+            with torch.autocast(
+                device_type="cuda", dtype=torch.float16, enabled=use_amp
+            ):
                 _ = m([img])
         # time
         t0 = time.time()
         for i in range(min(iters, len(imgs))):
             img = imgs[i].to(next(m.parameters()).device, non_blocking=True)
-            with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp):
+            with torch.autocast(
+                device_type="cuda", dtype=torch.float16, enabled=use_amp
+            ):
                 _ = m([img])
         t1 = time.time()
     return (t1 - t0) / min(iters, len(imgs))
